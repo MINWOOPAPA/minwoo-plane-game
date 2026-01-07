@@ -39,7 +39,7 @@
       color:#fff; text-align:center;
       padding:14px 16px; border-radius:18px;
       background:rgba(0,0,0,0.48);
-      width:min(520px, 92vw);
+      width:min(560px, 92vw);
       line-height:1.4;
       box-shadow: 0 14px 40px rgba(0,0,0,0.45);
       border: 1px solid rgba(255,255,255,0.10);
@@ -66,11 +66,12 @@
   <canvas id="c"></canvas>
 
   <div class="hud">
-    <span id="stage">스테이지: 1/10</span>
+    <span id="stage">스테이지: 1/20</span>
     <span id="score">점수: 0</span>
     <span id="best">최고: 0</span>
     <span id="life">목숨: 10</span>
     <span id="pow">파워업: W0 R0 L0</span>
+    <span id="sub">서브웨폰: OFF</span>
   </div>
 
   <div class="btns">
@@ -82,11 +83,10 @@
   <div id="panel" class="panel">
     <b>민우 1945 스테이지 슈팅 ✈️</b>
     <div>화면을 <b>터치해서 드래그</b>하면 비행기가 움직여요.</div>
-    <div>🔫 자동발사 / 😈 유도탄 / 🎁 파워업 3종 / 👑 스테이지 보스</div>
+    <div>🔫 자동발사 / 🎁 파워업 3종 / 👑 20스테이지 보스</div>
     <div style="margin-top:10px; font-weight:900;">파워업 3종</div>
-    <div>🟦 WIDE(와이드): 탄이 옆으로 늘어남</div>
-    <div>🟩 RAPID(연사): 발사 속도 증가</div>
-    <div>🟪 LASER(레이저): 관통/고데미지 탄</div>
+    <div>🟦 WIDE(와이드) / 🟩 RAPID(연사) / 🟪 LASER(레이저)</div>
+    <div style="margin-top:6px;">✅ 파워업 총합이 <b>10</b> 이상이면 <b>서브웨폰</b>이 켜져요!</div>
     <small>(아무 곳이나 터치하면 시작)</small>
   </div>
 
@@ -96,13 +96,12 @@
 <script>
 (() => {
   // ============================
-  // ✅ 아이 모드(속도 조절)
+  // ✅ 기본 설정
   // ============================
-  const KID_SPEED = 0.75;       // 더 느리게: 0.70 / 조금 빠르게: 0.80
-  const STAGE_GROWTH = 1.07;    // 스테이지 난이도 증가(완만)
-  const MAX_STAGE = 10;
+  const KID_SPEED = 0.75;     // 아이용 속도 (0.70 더 느림 / 0.80 조금 빠름)
+  const STAGE_GROWTH = 1.07;  // 난이도 완만 증가
+  const MAX_STAGE = 20;
 
-  // PWA
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
   }
@@ -129,6 +128,7 @@
   const elBest  = document.getElementById('best');
   const elLife  = document.getElementById('life');
   const elPow   = document.getElementById('pow');
+  const elSub   = document.getElementById('sub');
 
   const panel = document.getElementById('panel');
   const toast = document.getElementById('toast');
@@ -138,7 +138,6 @@
   const restartBtn = document.getElementById('restartBtn');
 
   let W=0, H=0, DPR=1;
-
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
   const rand=(a,b)=>a+Math.random()*(b-a);
 
@@ -176,12 +175,14 @@
   const sfx = {
     start(){ beep(660,0.06,'triangle',0.06); beep(880,0.06,'triangle',0.05); },
     shoot(){ beep(780,0.03,'square',0.040); },
+    sub(){ beep(920,0.03,'square',0.028); },
     laser(){ beep(980,0.04,'sawtooth',0.040); },
     hit(){ beep(140,0.10,'sawtooth',0.075); },
     boom(){ beep(220,0.06,'square',0.06); beep(110,0.10,'sawtooth',0.05); },
     power(){ beep(980,0.06,'triangle',0.08); beep(1320,0.06,'triangle',0.06); },
     enemyShoot(){ beep(420,0.04,'sine',0.028); },
     boss(){ beep(240,0.12,'square',0.07); beep(180,0.14,'square',0.05); },
+    bossHit(){ beep(520,0.03,'sine',0.035); },
     clear(){ beep(880,0.08,'triangle',0.07); beep(1320,0.10,'triangle',0.06); beep(1760,0.12,'triangle',0.05); }
   };
 
@@ -205,32 +206,39 @@
 
     stage:1,
     score:0,
-    best:Number(localStorage.getItem('minwoo_stage_best_v4') || 0),
+    best:Number(localStorage.getItem('minwoo_stage_best_v5') || 0),
 
     lives:10,
     invuln:0,
 
-    // powerups (✅ 무한 성장: cap 없음)
+    // powerups (무한성장 유지)
     wideLv:0,
     rapidLv:0,
     laserLv:0,
 
+    subWeapon:false,
+
     bgScroll:0,
 
     kills:0,
-    killsToBoss: 26,
+    killsToBoss: 28,
     bossActive:false,
 
     diffMul: 1.0,
 
     enemySpawnTimer:0,
-    enemySpawnEvery:0.70,
-    enemySpeed: 190,
-    enemyFireEvery:1.20,
+    enemySpawnEvery:0.72,
+    enemySpeed: 185,
+    enemyFireEvery:1.25,
 
     boss:null,
     _fireTimer:0,
+    _subTimer:0,
   };
+
+  function powerSum(){
+    return state.wideLv + state.rapidLv + state.laserLv;
+  }
 
   function updateHud(){
     elStage.textContent = `스테이지: ${state.stage}/${MAX_STAGE}`;
@@ -238,14 +246,15 @@
     elBest.textContent  = `최고: ${state.best}`;
     elLife.textContent  = `목숨: ${state.lives}`;
     elPow.textContent   = `파워업: W${state.wideLv} R${state.rapidLv} L${state.laserLv}`;
+    elSub.textContent   = `서브웨폰: ${state.subWeapon ? 'ON' : 'OFF'}`;
   }
   updateHud();
 
   // ---------- Objects ----------
   const player = { x: W*0.5, y: H*0.82, r:18, targetX:null, targetY:null };
   const enemies = [];        // {x,y,w,h,vy,hp,shootCd,kind,wiggle,t0,carrier,sparkT}
-  const pBullets = [];       // {x,y,vx,vy,r,damage,type,pierce,curve}
-  const eBullets = [];       // {x,y,vx,vy,r,damage,kind, homing, turnRate, speed, spawnDelay, life}
+  const pBullets = [];       // {x,y,vx,vy,r,damage,type,pierce,curve,from}
+  const eBullets = [];       // {x,y,vx,vy,r,damage,kind, spawnDelay, life}
   const powerups = [];       // {x,y,vy,r,type}
   const sparks = [];         // {x,y,vx,vy,life,col}
   const rings  = [];         // {x,y,r,vr,life,col}
@@ -265,8 +274,6 @@
       state.running=true; panel.style.display='none'; sfx.start();
     } else if(state.gameOver || state.cleared){
       resetGame();
-      state.running=true; panel.style.display='none'; sfx.start();
-    } else if(!state.running && !state.paused && !state.gameOver){
       state.running=true; panel.style.display='none'; sfx.start();
     }
 
@@ -314,6 +321,14 @@
     if(navigator.vibrate) navigator.vibrate(10);
   }
 
+  function bossHitFx(x,y){
+    // ✅ 보스 피격 이펙트: 번쩍 + 링 + 짧은 사운드
+    rings.push({x,y, r: 10, vr: 520, life: 0.20, col: '#ffffff'});
+    rings.push({x,y, r: 6, vr: 420, life: 0.18, col: '#7db6ff'});
+    sfx.bossHit();
+    if(state.boss) state.boss.hitFlash = 0.12;
+  }
+
   function onPlayerHit(dmg=1){
     if(state.invuln>0) return;
     state.lives -= dmg;
@@ -330,24 +345,24 @@
   }
 
   function applyPowerup(type){
-    // ✅ cap 제거(무한 성장)
-    if(type==='WIDE'){
-      state.wideLv += 1;
-      showToast(`🟦 WIDE UP! (${state.wideLv})`);
-    } else if(type==='RAPID'){
-      state.rapidLv += 1;
-      showToast(`🟩 RAPID UP! (${state.rapidLv})`);
-    } else if(type==='LASER'){
-      state.laserLv += 1;
-      showToast(`🟪 LASER UP! (${state.laserLv})`);
-    }
+    if(type==='WIDE')  state.wideLv += 1;
+    if(type==='RAPID') state.rapidLv += 1;
+    if(type==='LASER') state.laserLv += 1;
+
     sfx.power();
-    if(navigator.vibrate) navigator.vibrate([14,14,14]);
+    showToast(`POWER UP! (합:${powerSum()})`);
+
+    // ✅ 파워업 합 10 이상이면 서브웨폰 ON
+    const was = state.subWeapon;
+    state.subWeapon = (powerSum() >= 10);
+    if(!was && state.subWeapon){
+      showToast('서브웨폰 ON!');
+      if(navigator.vibrate) navigator.vibrate([30,30,30]);
+    }
     updateHud();
   }
 
   function dropPowerup(x,y){
-    // 캐리어 적은 확정 드랍 / 일반 적은 낮은 확률
     const r = Math.random();
     let type = 'WIDE';
     if(r < 0.34) type = 'WIDE';
@@ -365,15 +380,11 @@
 
     state.diffMul = Math.pow(STAGE_GROWTH, state.stage - 1);
 
-    // ✅ 기본 느리게 + 초반 파워업 전 더 완화
-    const pSum = state.wideLv + state.rapidLv + state.laserLv;
-    const earlyEase = (state.stage <= 2 && pSum < 2) ? 1.25 : 1.0;
-
     state.enemySpeed = 185 * state.diffMul;
-    state.enemySpawnEvery = clamp((0.74 / state.diffMul) * earlyEase, 0.40, 0.95);
-    state.enemyFireEvery  = clamp((1.30 / state.diffMul) * earlyEase, 0.75, 1.55);
+    state.enemySpawnEvery = clamp((0.74 / state.diffMul), 0.34, 0.95);
+    state.enemyFireEvery  = clamp((1.30 / state.diffMul), 0.60, 1.55);
 
-    state.killsToBoss = Math.floor(22 + state.stage * 5);
+    state.killsToBoss = Math.floor(24 + state.stage * 4);
 
     enemies.length=0; eBullets.length=0; powerups.length=0; sparks.length=0; rings.length=0;
 
@@ -386,7 +397,9 @@
     state.score=0;
     state.lives=10;
     state.invuln=0;
+
     state.wideLv=0; state.rapidLv=0; state.laserLv=0;
+    state.subWeapon=false;
 
     enemies.length=0; pBullets.length=0; eBullets.length=0; powerups.length=0; sparks.length=0; rings.length=0;
 
@@ -395,16 +408,17 @@
 
     state.enemySpawnTimer=0;
     state._fireTimer=0;
+    state._subTimer=0;
 
     setStage(1);
 
     panel.style.display='block';
     panel.innerHTML = `
       <b>민우 1945 스테이지 슈팅 ✈️</b>
-      <div>드래그 이동 / 자동발사 / 적 유도탄</div>
-      <div style="margin-top:8px; font-weight:900;">✨ 반짝이는 적을 잡으면 아이템 확정!</div>
-      <div>보스는 내려오다 멈추고, 잡으면 스테이지 클리어!</div>
-      <small>(아무 곳이나 터치하면 시작)</small>
+      <div>드래그 이동 / 자동발사 / 20스테이지</div>
+      <div style="margin-top:8px; font-weight:900;">✨ 반짝이는 적 = 아이템 확률 ↑</div>
+      <div>파워업 합 10 이상이면 <b>서브웨폰 ON</b></div>
+      <small>(터치하면 시작)</small>
     `;
     pauseBtn.textContent='일시정지';
     updateHud();
@@ -416,7 +430,7 @@
     state.paused=false;
 
     state.best = Math.max(state.best, Math.floor(state.score));
-    localStorage.setItem('minwoo_stage_best_v4', String(state.best));
+    localStorage.setItem('minwoo_stage_best_v5', String(state.best));
     updateHud();
 
     panel.style.display='block';
@@ -425,7 +439,6 @@
       <div>점수: <b>${Math.floor(state.score)}</b></div>
       <div>최고: <b>${state.best}</b></div>
       <div style="margin-top:10px; font-weight:900;">터치하면 다시 시작</div>
-      <small>(민우도 할 수 있는 1945 🙂)</small>
     `;
   }
 
@@ -436,16 +449,15 @@
     if(state.stage >= MAX_STAGE){
       state.cleared=true;
       state.best = Math.max(state.best, Math.floor(state.score));
-      localStorage.setItem('minwoo_stage_best_v4', String(state.best));
+      localStorage.setItem('minwoo_stage_best_v5', String(state.best));
       updateHud();
       sfx.clear();
       panel.style.display='block';
       panel.innerHTML = `
         <b>전체 클리어! 🎉</b>
-        <div>10 스테이지 완주 성공!</div>
+        <div>20 스테이지 완주 성공!</div>
         <div>점수: <b>${Math.floor(state.score)}</b> / 최고: <b>${state.best}</b></div>
         <div style="margin-top:10px; font-weight:900;">터치하면 다시(1스테이지)</div>
-        <small>(아빠가 만든 게임 ✅)</small>
       `;
       return;
     }
@@ -455,9 +467,8 @@
     panel.style.display='block';
     panel.innerHTML = `
       <b>스테이지 ${state.stage} 클리어! ✅</b>
-      <div>다음 스테이지: <b>${next}</b> (난이도 완만하게 증가)</div>
+      <div>다음 스테이지: <b>${next}</b></div>
       <div style="margin-top:10px; font-weight:900;">터치하면 시작</div>
-      <small>아이템 많이 먹으면 탄이 더 화려하게 변해요 🙂</small>
     `;
     setStage(next);
 
@@ -475,12 +486,12 @@
     const hp = (w > 46) ? 5 : (Math.random() < 0.16 ? 3 : 2);
     const kind = (hp >= 5) ? 'elite' : (hp >= 3 ? 'heavy' : 'normal');
 
-    const carrierChance = 0.24; // ✅ 아이템 체감 충분히
+    const carrierChance = 0.22;
     const carrier = Math.random() < carrierChance;
 
     enemies.push({
       x,y,w,h,vy,hp,
-      shootCd: rand(0.50, 1.10),
+      shootCd: rand(0.55, 1.20),
       kind,
       wiggle: rand(0.5, 1.0),
       t0: rand(0, 10),
@@ -490,26 +501,26 @@
   }
 
   function spawnBoss(){
-    const w = Math.min(260, W * 0.66);
-    const h = 110;
+    const w = Math.min(280, W * 0.70);
+    const h = 120;
     const x = W * 0.5;
     const y = -h - 40;
 
-    // ✅ 보스 강화(HP 크게 증가)
-    const hpMax = Math.floor((320 + state.stage*55) * state.diffMul * 1.35);
+    // 스테이지 20 기준으로 점점 강해짐
+    const hpMax = Math.floor((320 + state.stage*60) * state.diffMul * 1.25);
 
     state.boss = {
       x,y,w,h,
       yStop: 118,
       vy: 120,
       dir: 1,
-      speedX: 80 + 12*state.stage,
+      speedX: 85 + 10*state.stage,
       hp: hpMax,
       hpMax,
       shootTimer: 0,
-      // ✅ 보스 더 자주 쏨
-      shootEvery: clamp(0.85 / state.diffMul, 0.35, 0.85),
+      shootEvery: clamp(0.85 / state.diffMul, 0.28, 0.85),
       patT: 0,
+      hitFlash: 0, // ✅ 피격 번쩍
     };
     state.bossActive = true;
     sfx.boss();
@@ -519,24 +530,21 @@
 
   // ---------- Shooting ----------
   function getFireEvery(){
-    // ✅ 너무 빨라지지 않게 최소값 제한
     return clamp(0.18 - state.rapidLv*0.010, 0.08, 0.18);
   }
 
   function playerFire(){
     const baseVy = 900;
-    const count = 1 + Math.min(10, state.wideLv); // 너무 많아지면 과부하 → 11발까지만
+    const count = 1 + Math.min(10, state.wideLv);
     const spreadBase = 70 + Math.min(12, state.wideLv) * 24;
 
-    const pSum = state.wideLv + state.rapidLv + state.laserLv;
-
-    // ✅ 파워업 많이 먹을수록 탄이 휘기 시작(임팩트)
+    const pSum = powerSum();
     const curvePow = Math.max(0, pSum - 8);
-    const curveBase = Math.min(3.0, curvePow * 0.12);
+    const curveBase = Math.min(2.4, curvePow * 0.10);
 
-    // 일반탄
+    // 메인탄
     if(count === 1){
-      pBullets.push({x: player.x, y: player.y - player.r - 8, vx: 0, vy: -baseVy, r: 3.1, damage: 1, type:'N', pierce:0, curve: (Math.random()<0.5?-1:1)*curveBase});
+      pBullets.push({x: player.x, y: player.y - player.r - 8, vx: 0, vy: -baseVy, r: 3.1, damage: 1, type:'N', pierce:0, curve: (Math.random()<0.5?-1:1)*curveBase, from:'main'});
     } else {
       for(let i=0;i<count;i++){
         const t = (i/(count-1) - 0.5);
@@ -547,41 +555,63 @@
           vx, vy: -baseVy,
           r: 3.0, damage: 1,
           type:'N', pierce:0,
-          curve: (t===0? (Math.random()<0.5?-1:1) : Math.sign(t)) * curveBase * 0.85
+          curve: (t===0? (Math.random()<0.5?-1:1) : Math.sign(t)) * curveBase * 0.85,
+          from:'main'
         });
       }
     }
 
-    // 레이저(관통/고데미지)
+    // 레이저
     if(state.laserLv > 0){
       const pierce = Math.min(20, state.laserLv);
       const dmg = 2 + Math.floor(state.laserLv/2) + Math.min(10, state.laserLv);
-      pBullets.push({x: player.x, y: player.y - player.r - 10, vx: 0, vy: -1200, r: 2.6, damage: dmg, type:'L', pierce, curve: 0});
+      pBullets.push({x: player.x, y: player.y - player.r - 10, vx: 0, vy: -1200, r: 2.6, damage: dmg, type:'L', pierce, curve: 0, from:'main'});
       sfx.laser();
     } else {
       sfx.shoot();
     }
   }
 
-  // ✅ 적 유도탄(3발 연속, 간격 느리게)
+  // ✅ 서브웨폰(파워합 10 이상)
+  function subWeaponFire(){
+    const y = player.y - player.r - 6;
+    const leftX  = player.x - 34;
+    const rightX = player.x + 34;
+
+    // 서브웨폰 레벨(파워가 더 올라가면 약간 강화)
+    const lvl = Math.floor((powerSum() - 10) / 5); // 10~14:0, 15~19:1 ...
+    const dmg = 1 + Math.min(3, lvl);
+    const spd = -980;
+
+    // 살짝 모이는 각도(임팩트)
+    pBullets.push({x:leftX,  y, vx: -40, vy: spd, r: 2.7, damage: dmg, type:'S', pierce:0, curve: 0, from:'sub'});
+    pBullets.push({x:rightX, y, vx:  40, vy: spd, r: 2.7, damage: dmg, type:'S', pierce:0, curve: 0, from:'sub'});
+    sfx.sub();
+  }
+
+  // ✅ 적 탄: 유도 없음. "플레이어를 향해 한 번 조준" 후 직선 진행
   function enemyFireFrom(e){
-    const pSum = state.wideLv + state.rapidLv + state.laserLv;
-    const earlyEase = (state.stage <= 2 && pSum < 2) ? 0.75 : 1.0;
-
-    const speed = 260 * state.diffMul * earlyEase;
-    const turn  = 3.2 * earlyEase;
-    const baseDelay = 0.14; // ✅ 3발 간격(천천히)
-
+    const speed = 280 * state.diffMul;
+    const baseDelay = 0.14; // 3발 간격(천천히)
     const shots = 3;
+
+    // 조준 각도(한 번만 계산)
+    const dx = player.x - e.x;
+    const dy = player.y - e.y;
+    const len = Math.max(1, Math.hypot(dx,dy));
+    const ax = (dx/len) * speed;
+    const ay = (dy/len) * speed;
+
+    // 너무 옆으로 튀면 게임이 어려워지니 X속도 제한
+    const vx0 = clamp(ax, -220*state.diffMul, 220*state.diffMul);
+    const vy0 = Math.max(180*state.diffMul, ay);
+
     for(let i=0;i<shots;i++){
       eBullets.push({
         x: e.x, y: e.y + e.h*0.55,
-        vx: 0, vy: speed,
+        vx: vx0, vy: vy0,
         r: 4.0, damage: 1,
-        kind: 'homing',
-        homing: true,
-        turnRate: turn,
-        speed: speed,
+        kind: 'aim',
         spawnDelay: i * baseDelay,
         life: 6.0
       });
@@ -589,18 +619,22 @@
     sfx.enemyShoot();
   }
 
+  // 보스 패턴: 10개 패턴을 20스테이지에서 2바퀴(11~20은 강화)
   function bossFirePattern(){
     const b = state.boss;
     if(!b) return;
 
     const dm = state.diffMul;
-    const baseVy = 300 * dm; // 보스는 더 강하게
-    const sx = 220;
+    const cycle = ((state.stage - 1) % 10) + 1;     // 1~10
+    const tier = (state.stage > 10) ? 1.15 : 1.00;  // 11~20 강화
+
+    const baseVy = 320 * dm * tier;
+    const sx = 240 * tier;
 
     const addBullet = (x,y,vx,vy,r=4.0, kind='orb') =>
-      eBullets.push({x,y,vx,vy,r,damage:1,kind, homing:false, life:8.0});
+      eBullets.push({x,y,vx,vy,r,damage:1,kind, spawnDelay:0, life:8.0});
 
-    const aimAtPlayer = (speed=420*dm) => {
+    const aimAtPlayer = (speed=460*dm*tier) => {
       const dx = player.x - b.x;
       const dy = (player.y - b.y);
       const len = Math.max(1, Math.hypot(dx,dy));
@@ -609,59 +643,59 @@
 
     b.patT += b.shootEvery;
 
-    // 스테이지별 보스 패턴 (10개)
-    switch(state.stage){
-      case 1: {
-        const n = 7;
+    switch(cycle){
+      case 1: { // fan
+        const n = 8;
         for(let i=0;i<n;i++){
           const t = (i/(n-1)-0.5);
-          addBullet(b.x + t*34, b.y + b.h*0.60, t*sx, baseVy, 4.0, 'orb');
+          addBullet(b.x + t*36, b.y + b.h*0.60, t*sx, baseVy, 4.0, 'orb');
         }
         break;
       }
-      case 2: {
-        for(let k=0;k<4;k++){
-          const a = aimAtPlayer(420*dm + k*14);
+      case 2: { // aimed burst
+        const kmax = (tier>1 ? 5 : 4);
+        for(let k=0;k<kmax;k++){
+          const a = aimAtPlayer(480*dm*tier + k*18);
           addBullet(b.x, b.y + b.h*0.60, a.vx, a.vy, 4.2, 'orb');
         }
         break;
       }
-      case 3: {
-        const n = 9;
+      case 3: { // spiral
+        const n = 10;
         const ang0 = b.patT * 1.15;
         for(let i=0;i<n;i++){
           const ang = ang0 + i*(Math.PI*2/n);
-          addBullet(b.x, b.y + b.h*0.55, Math.cos(ang)*180*dm, baseVy + Math.sin(ang)*110*dm, 3.8, 'orb');
+          addBullet(b.x, b.y + b.h*0.55, Math.cos(ang)*200*dm*tier, baseVy + Math.sin(ang)*130*dm*tier, 3.8, 'orb');
         }
         break;
       }
-      case 4: {
-        const n = 8;
-        const w = Math.sin(b.patT*1.0) * 0.9;
+      case 4: { // wave
+        const n = 9;
+        const w = Math.sin(b.patT*1.0) * 1.0;
         for(let i=0;i<n;i++){
           const t = (i/(n-1)-0.5);
-          addBullet(b.x + t*56, b.y + b.h*0.58, (t*220 + w*200)*dm, baseVy, 4.0, 'orb');
+          addBullet(b.x + t*58, b.y + b.h*0.58, (t*240 + w*220)*dm*tier, baseVy, 4.0, 'orb');
         }
         break;
       }
-      case 5: {
-        const n = 10;
+      case 5: { // rain
+        const n = tier>1 ? 12 : 10;
         for(let i=0;i<n;i++){
-          addBullet(b.x + rand(-b.w*0.33, b.w*0.33), b.y + b.h*0.62, rand(-70,70)*dm, baseVy + rand(0,110)*dm, 3.7, 'orb');
+          addBullet(b.x + rand(-b.w*0.33, b.w*0.33), b.y + b.h*0.62, rand(-80,80)*dm*tier, baseVy + rand(0,140)*dm*tier, 3.7, 'orb');
         }
         break;
       }
-      case 6: {
+      case 6: { // cross + aimed
         for(let t of [-1, 1]){
-          addBullet(b.x + t*46, b.y + b.h*0.60, t*210*dm, baseVy, 4.0, 'orb');
-          addBullet(b.x + t*10, b.y + b.h*0.60, t*130*dm, baseVy+80*dm, 4.0, 'orb');
+          addBullet(b.x + t*46, b.y + b.h*0.60, t*220*dm*tier, baseVy, 4.0, 'orb');
+          addBullet(b.x + t*12, b.y + b.h*0.60, t*140*dm*tier, baseVy+90*dm*tier, 4.0, 'orb');
         }
-        const a = aimAtPlayer(500*dm);
+        const a = aimAtPlayer(520*dm*tier);
         addBullet(b.x, b.y + b.h*0.60, a.vx, a.vy, 4.4, 'orb');
         break;
       }
-      case 7: {
-        const n = 10;
+      case 7: { // alternating fan
+        const n = 11;
         const dir = (Math.floor(b.patT*1.2) % 2 === 0) ? 1 : -1;
         for(let i=0;i<n;i++){
           const t = (i/(n-1)-0.5);
@@ -669,56 +703,56 @@
         }
         break;
       }
-      case 8: {
-        const gapW = 170;
+      case 8: { // gap wall
+        const gapW = tier>1 ? 170 : 190;
         const center = (Math.sin(b.patT*0.85)*0.5+0.5) * (W-gapW) + gapW/2;
-        const n = 14;
+        const n = tier>1 ? 16 : 14;
         for(let i=0;i<n;i++){
           const x = (i/(n-1))*W;
           if(Math.abs(x-center) < gapW/2) continue;
-          addBullet(x, b.y + b.h*0.62, 0, 330*dm, 3.9, 'orb');
+          addBullet(x, b.y + b.h*0.62, 0, 360*dm*tier, 3.9, 'orb');
         }
         break;
       }
-      case 9: {
-        const n = 12;
+      case 9: { // dense + needle
+        const n = tier>1 ? 14 : 12;
         for(let i=0;i<n;i++){
           const t = (i/(n-1)-0.5);
-          addBullet(b.x + t*86, b.y + b.h*0.60, t*180*dm, baseVy+80*dm, 3.7, 'orb');
+          addBullet(b.x + t*86, b.y + b.h*0.60, t*190*dm*tier, baseVy+90*dm*tier, 3.7, 'orb');
         }
-        const a = aimAtPlayer(560*dm);
+        const a = aimAtPlayer(600*dm*tier);
         addBullet(b.x, b.y + b.h*0.58, a.vx, a.vy, 3.2, 'needle');
         break;
       }
-      case 10: {
+      case 10: { // phase
         const hpRatio = b.hp / b.hpMax;
         if(hpRatio > 0.66){
           const n = 10;
           const ang0 = b.patT * 1.25;
           for(let i=0;i<n;i++){
             const ang = ang0 + i*(Math.PI*2/n);
-            addBullet(b.x, b.y + b.h*0.55, Math.cos(ang)*220*dm, baseVy + Math.sin(ang)*140*dm, 3.8, 'orb');
+            addBullet(b.x, b.y + b.h*0.55, Math.cos(ang)*240*dm*tier, baseVy + Math.sin(ang)*160*dm*tier, 3.8, 'orb');
           }
         } else if(hpRatio > 0.33){
-          const gapW = 190;
+          const gapW = 200;
           const center = (Math.sin(b.patT*1.0)*0.5+0.5) * (W-gapW) + gapW/2;
           const n = 16;
           for(let i=0;i<n;i++){
             const x = (i/(n-1))*W;
             if(Math.abs(x-center) < gapW/2) continue;
-            addBullet(x, b.y + b.h*0.62, 0, 360*dm, 3.9, 'orb');
+            addBullet(x, b.y + b.h*0.62, 0, 380*dm*tier, 3.9, 'orb');
           }
-          const a = aimAtPlayer(620*dm);
+          const a = aimAtPlayer(660*dm*tier);
           addBullet(b.x, b.y + b.h*0.58, a.vx, a.vy, 3.1, 'needle');
         } else {
           const n = 12;
           const dir = (Math.floor(b.patT*1.3) % 2 === 0) ? 1 : -1;
           for(let i=0;i<n;i++){
             const t = (i/(n-1)-0.5);
-            addBullet(b.x, b.y + b.h*0.60, (t*280*dir)*dm, 360*dm, 3.8, 'orb');
+            addBullet(b.x, b.y + b.h*0.60, (t*300*dir)*dm, 380*dm*tier, 3.8, 'orb');
           }
           for(let i=0;i<7;i++){
-            addBullet(b.x + rand(-b.w*0.33, b.w*0.33), b.y + b.h*0.60, rand(-110,110)*dm, 360*dm, 3.6, 'orb');
+            addBullet(b.x + rand(-b.w*0.33, b.w*0.33), b.y + b.h*0.60, rand(-120,120)*dm*tier, 380*dm*tier, 3.6, 'orb');
           }
         }
         break;
@@ -729,7 +763,7 @@
 
   // ---------- Rendering ----------
   function drawBackground(dt){
-    const scrollSpeed = (120 + 10*state.stage) * KID_SPEED;
+    const scrollSpeed = (120 + 8*state.stage) * KID_SPEED;
     state.bgScroll = (state.bgScroll + scrollSpeed * dt) % H;
 
     const g = ctx.createLinearGradient(0,0,0,H);
@@ -746,19 +780,6 @@
       const y = ((i*163) + state.bgScroll) % H;
       ctx.fillRect(x, y, 2, 2);
     }
-    ctx.globalAlpha = 1;
-
-    ctx.globalAlpha = 0.06;
-    ctx.strokeStyle = '#7db6ff';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    const grid = 64;
-    const off = state.bgScroll % grid;
-    for(let y=-grid; y<H+grid; y+=grid){
-      ctx.moveTo(0, y - off);
-      ctx.lineTo(W, y - off);
-    }
-    ctx.stroke();
     ctx.globalAlpha = 1;
   }
 
@@ -815,6 +836,15 @@
       ctx.fill();
     }
 
+    // 서브웨폰 ON 표시(작은 위성포)
+    if(state.subWeapon){
+      drawGlowCircle(-34, 8, 16, 'rgba(109,255,178,0.28)', 'rgba(109,255,178,0)', 1);
+      drawGlowCircle(34, 8, 16, 'rgba(109,255,178,0.28)', 'rgba(109,255,178,0)', 1);
+      ctx.fillStyle = '#6dffb2';
+      ctx.beginPath(); ctx.arc(-34, 8, 4, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(34, 8, 4, 0, Math.PI*2); ctx.fill();
+    }
+
     ctx.restore();
   }
 
@@ -822,11 +852,10 @@
     ctx.save();
     ctx.translate(e.x, e.y);
 
-    // ✅ 파워업 캐리어 적은 반짝 + 금색 하이라이트
     if(e.carrier){
       e.sparkT += 0.06;
       const pulse = 0.5 + 0.5*Math.sin(e.sparkT*3.2);
-      drawGlowCircle(0, -e.h*0.10, 26 + pulse*6, 'rgba(255,215,90,0.60)', 'rgba(255,215,90,0)', 1);
+      drawGlowCircle(0, -e.h*0.10, 26 + pulse*6, 'rgba(255,215,90,0.55)', 'rgba(255,215,90,0)', 1);
     }
 
     const g = ctx.createLinearGradient(0, -e.h, 0, e.h);
@@ -842,7 +871,6 @@
     ctx.closePath();
     ctx.fill();
 
-    // 금색 외곽선
     if(e.carrier){
       const pulse = 0.5 + 0.5*Math.sin(e.sparkT*3.2);
       ctx.strokeStyle = `rgba(255,215,90,${0.25 + pulse*0.50})`;
@@ -861,12 +889,6 @@
     ctx.beginPath(); ctx.arc(-e.w*0.14, -e.h*0.12, 3.2, 0, Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.arc(e.w*0.14, -e.h*0.12, 3.2, 0, Math.PI*2); ctx.fill();
 
-    if(e.kind==='elite'){
-      drawGlowCircle(0, -e.h*0.05, 16, 'rgba(125,182,255,0.55)', 'rgba(125,182,255,0)', 0.9);
-      ctx.fillStyle = '#7db6ff';
-      ctx.beginPath(); ctx.ellipse(0, -e.h*0.05, 7, 10, 0, 0, Math.PI*2); ctx.fill();
-    }
-
     ctx.restore();
   }
 
@@ -876,6 +898,11 @@
 
     ctx.save();
     ctx.translate(b.x, b.y);
+
+    // 피격 번쩍
+    if(b.hitFlash > 0){
+      drawGlowCircle(0, 0, 76, 'rgba(255,255,255,0.35)', 'rgba(255,255,255,0)', 1);
+    }
 
     const hg = ctx.createLinearGradient(0, -b.h, 0, b.h);
     hg.addColorStop(0, '#2a3246');
@@ -890,23 +917,30 @@
     ctx.closePath();
     ctx.fill();
 
+    // 보스에 하이라이트(강해보이게)
+    ctx.globalAlpha = 0.18;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(0, -b.h*0.56);
+    ctx.lineTo(b.w*0.30, 0);
+    ctx.lineTo(0, b.h*0.12);
+    ctx.lineTo(-b.w*0.30, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
     ctx.fillStyle = '#ff5a6b';
     ctx.fillRect(-b.w*0.50, -b.h*0.08, b.w*0.16, b.h*0.34);
     ctx.fillRect(b.w*0.34, -b.h*0.08, b.w*0.16, b.h*0.34);
 
-    drawGlowCircle(0, -b.h*0.08, 48, 'rgba(255,204,102,0.22)', 'rgba(255,204,102,0)', 1);
+    drawGlowCircle(0, -b.h*0.08, 48, 'rgba(255,204,102,0.20)', 'rgba(255,204,102,0)', 1);
     drawGlowCircle(0, -b.h*0.08, 42, 'rgba(125,182,255,0.35)', 'rgba(125,182,255,0)', 1);
     ctx.fillStyle = '#7db6ff';
     ctx.beginPath(); ctx.ellipse(0, -b.h*0.08, 22, 14, 0, 0, Math.PI*2); ctx.fill();
 
-    drawGlowCircle(-28, -b.h*0.16, 16, 'rgba(255,90,107,0.55)', 'rgba(255,90,107,0)', 1);
-    drawGlowCircle(28, -b.h*0.16, 16, 'rgba(255,90,107,0.55)', 'rgba(255,90,107,0)', 1);
-    ctx.fillStyle = '#ff2f4f';
-    ctx.beginPath(); ctx.arc(-28, -b.h*0.16, 6, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(28, -b.h*0.16, 6, 0, Math.PI*2); ctx.fill();
-
     ctx.restore();
 
+    // HP bar
     const pad = 18;
     const barW = W - pad*2;
     const barH = 12;
@@ -915,8 +949,7 @@
     ctx.fillStyle = 'rgba(255,255,255,0.14)';
     ctx.fillRect(pad, 70, barW, barH);
 
-    const col = (state.stage<=3) ? '#7db6ff' : (state.stage<=6 ? '#6dffb2' : (state.stage<=9 ? '#d993ff' : '#ffcc66'));
-    ctx.fillStyle = col;
+    ctx.fillStyle = '#ffcc66';
     ctx.fillRect(pad, 70, barW*ratio, barH);
 
     ctx.globalAlpha = 0.55;
@@ -931,6 +964,10 @@
         drawGlowCircle(m.x, m.y, 14, 'rgba(217,147,255,0.35)', 'rgba(217,147,255,0)', 1);
         ctx.fillStyle = '#d993ff';
         ctx.fillRect(m.x-1.5, m.y-14, 3, 16);
+      } else if(m.type==='S'){
+        drawGlowCircle(m.x, m.y, 10, 'rgba(109,255,178,0.25)', 'rgba(109,255,178,0)', 1);
+        ctx.fillStyle = '#6dffb2';
+        ctx.fillRect(m.x-1.6, m.y-8, 3.2, 10);
       } else {
         drawGlowCircle(m.x, m.y, 12, 'rgba(233,241,255,0.22)', 'rgba(233,241,255,0)', 1);
         ctx.fillStyle = '#e9f1ff';
@@ -941,16 +978,11 @@
     }
 
     for(const b of eBullets){
-      if(b.spawnDelay && b.spawnDelay > 0) continue; // 딜레이 탄은 아직 안 그림
-
+      if(b.spawnDelay && b.spawnDelay > 0) continue;
       if(b.kind==='needle'){
         drawGlowCircle(b.x, b.y, 14, 'rgba(255,204,102,0.26)', 'rgba(255,204,102,0)', 1);
         ctx.fillStyle = '#ffcc66';
         ctx.fillRect(b.x-1.5, b.y-6, 3, 12);
-      } else if(b.homing){
-        drawGlowCircle(b.x, b.y, 16, 'rgba(255,120,120,0.22)', 'rgba(255,120,120,0)', 1);
-        ctx.fillStyle = '#ff7a7a';
-        ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI*2); ctx.fill();
       } else {
         drawGlowCircle(b.x, b.y, 14, 'rgba(255,204,102,0.18)', 'rgba(255,204,102,0)', 1);
         ctx.fillStyle = '#ffcc66';
@@ -1018,6 +1050,9 @@
 
     if(state.invuln>0) state.invuln = Math.max(0, state.invuln - dt);
 
+    // 서브웨폰 상태 갱신(혹시 수동 변경 대비)
+    state.subWeapon = (powerSum() >= 10);
+
     // player move
     const follow = 12;
     if(player.targetX!==null){
@@ -1027,7 +1062,7 @@
     player.x = clamp(player.x, player.r+10, W-player.r-10);
     player.y = clamp(player.y, player.r+10, H-player.r-10);
 
-    // auto fire
+    // auto fire (main)
     state._fireTimer += dt;
     const fireEvery = getFireEvery();
     while(state._fireTimer >= fireEvery){
@@ -1035,7 +1070,19 @@
       playerFire();
     }
 
-    // spawn enemies (boss 없을 때만)
+    // auto fire (sub weapon)
+    if(state.subWeapon){
+      state._subTimer += dt;
+      const subEvery = 0.22; // 서브웨폰 발사 간격
+      while(state._subTimer >= subEvery){
+        state._subTimer -= subEvery;
+        subWeaponFire();
+      }
+    } else {
+      state._subTimer = 0;
+    }
+
+    // spawn enemies
     if(!state.bossActive){
       state.enemySpawnTimer += dt;
       while(state.enemySpawnTimer >= state.enemySpawnEvery){
@@ -1044,7 +1091,7 @@
       }
     }
 
-    // enemies
+    // enemies update
     for(let i=enemies.length-1;i>=0;i--){
       const e = enemies[i];
       e.y += e.vy * dt;
@@ -1068,9 +1115,11 @@
       }
     }
 
-    // boss
+    // boss update
     if(state.bossActive){
       const b = state.boss;
+
+      if(b.hitFlash > 0) b.hitFlash = Math.max(0, b.hitFlash - dt);
 
       if(b.y < b.yStop){
         b.y += b.vy * dt;
@@ -1097,46 +1146,24 @@
     // player bullets
     for(let i=pBullets.length-1;i>=0;i--){
       const m = pBullets[i];
-
-      // ✅ 곡선 탄(파워업 많이 먹을수록 더 휨)
       if(m.curve && m.curve !== 0){
         const ang = Math.atan2(m.vy, m.vx) + m.curve * dt;
         const sp  = Math.max(1, Math.hypot(m.vx, m.vy));
         m.vx = Math.cos(ang) * sp;
         m.vy = Math.sin(ang) * sp;
       }
-
       m.x += m.vx * dt;
       m.y += m.vy * dt;
-
-      if(m.y < -60 || m.x < -60 || m.x > W+60) pBullets.splice(i,1);
+      if(m.y < -70 || m.x < -70 || m.x > W+70) pBullets.splice(i,1);
     }
 
-    // enemy bullets (✅ 유도탄 + 3발 딜레이)
+    // enemy bullets (no homing)
     for(let i=eBullets.length-1;i>=0;i--){
       const b = eBullets[i];
 
       if(b.spawnDelay && b.spawnDelay > 0){
         b.spawnDelay -= dt;
         continue;
-      }
-
-      if(b.homing){
-        const curAng = Math.atan2(b.vy, b.vx);
-        const dx = player.x - b.x;
-        const dy = player.y - b.y;
-        const targetAng = Math.atan2(dy, dx);
-
-        let diff = targetAng - curAng;
-        while(diff > Math.PI) diff -= Math.PI*2;
-        while(diff < -Math.PI) diff += Math.PI*2;
-
-        const maxTurn = b.turnRate * dt;
-        diff = clamp(diff, -maxTurn, maxTurn);
-
-        const newAng = curAng + diff;
-        b.vx = Math.cos(newAng) * b.speed;
-        b.vy = Math.sin(newAng) * b.speed;
       }
 
       b.x += b.vx * dt;
@@ -1153,24 +1180,21 @@
         onPlayerHit(1);
         continue;
       }
-      if(b.y > H + 100 || b.x < -120 || b.x > W+120) eBullets.splice(i,1);
+      if(b.y > H + 110 || b.x < -130 || b.x > W+130) eBullets.splice(i,1);
     }
 
     // bullets vs enemies
     for(let ei=enemies.length-1; ei>=0; ei--){
       const e = enemies[ei];
+      const er = Math.max(e.w,e.h)*0.34;
 
       for(let bi=pBullets.length-1; bi>=0; bi--){
         const m = pBullets[bi];
-        const er = Math.max(e.w,e.h)*0.34;
         if(circleHit(m.x, m.y, m.r+2, e.x, e.y, er)){
           e.hp -= m.damage;
 
-          if(m.type==='L' && m.pierce>0){
-            m.pierce -= 1;
-          } else {
-            pBullets.splice(bi,1);
-          }
+          if(m.type==='L' && m.pierce>0) m.pierce -= 1;
+          else pBullets.splice(bi,1);
 
           boom(m.x, m.y, 4, m.type==='L' ? '#d993ff' : '#ffcc66');
 
@@ -1179,12 +1203,8 @@
             state.kills += 1;
             boom(e.x, e.y, e.kind==='elite' ? 28 : 18, '#ffcc66');
 
-            // ✅ 캐리어는 확정 드랍 / 일반은 낮은 확률
-            if(e.carrier){
-              dropPowerup(e.x, e.y);
-            } else if(Math.random() < 0.10){
-              dropPowerup(e.x, e.y);
-            }
+            if(e.carrier) dropPowerup(e.x, e.y);
+            else if(Math.random() < 0.10) dropPowerup(e.x, e.y);
 
             enemies.splice(ei,1);
           }
@@ -1203,17 +1223,15 @@
         if(circleHit(m.x, m.y, m.r+2, b.x, b.y, br)){
           b.hp -= m.damage;
 
-          if(m.type==='L' && m.pierce>0){
-            m.pierce -= 1;
-          } else {
-            pBullets.splice(bi,1);
-          }
+          // ✅ 보스 피격 이펙트
+          bossHitFx(m.x, m.y);
 
-          boom(m.x, m.y, 4, m.type==='L' ? '#d993ff' : '#7db6ff');
+          if(m.type==='L' && m.pierce>0) m.pierce -= 1;
+          else pBullets.splice(bi,1);
 
           if(b.hp <= 0){
-            state.score += 1500 * state.diffMul;
-            boom(b.x, b.y, 70, '#ffcc66');
+            state.score += 1600 * state.diffMul;
+            boom(b.x, b.y, 80, '#ffcc66');
             state.bossActive = false;
             state.boss = null;
             enemies.length=0;
@@ -1226,7 +1244,7 @@
       }
     }
 
-    // powerups
+    // powerups update
     for(let i=powerups.length-1;i>=0;i--){
       const p = powerups[i];
       p.y += p.vy * dt;
@@ -1239,7 +1257,7 @@
       if(p.y > H + 60) powerups.splice(i,1);
     }
 
-    // FX
+    // FX update
     for(let i=sparks.length-1;i>=0;i--){
       const p = sparks[i];
       p.life -= dt;
@@ -1274,7 +1292,7 @@
     const dt = Math.min(0.033, (ts - state.lastTs)/1000);
     state.lastTs = ts;
 
-    // ✅ 화면 깨짐 방지: 매 프레임 transform 초기화 (Shake 없음)
+    // ✅ 화면 깨짐 방지: 매 프레임 transform 초기화
     ctx.setTransform(DPR,0,0,DPR,0,0);
 
     drawBackground(dt);
