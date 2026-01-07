@@ -1,4 +1,4 @@
-const CACHE_NAME = 'minwoo-plane-v11';
+const CACHE_NAME = 'minwoo-plane-v12';
 const ASSETS = [
   './',
   './index.html',
