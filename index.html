@@ -38,14 +38,51 @@
       transform:translate(-50%,-50%);
       color:#fff; text-align:center;
       padding:14px 16px; border-radius:18px;
-      background:rgba(0,0,0,0.48);
-      width:min(560px, 92vw);
-      line-height:1.4;
+      background:rgba(0,0,0,0.52);
+      width:min(680px, 94vw);
+      line-height:1.45;
       box-shadow: 0 14px 40px rgba(0,0,0,0.45);
       border: 1px solid rgba(255,255,255,0.10);
     }
     .panel b{ font-size:18px; display:block; margin-bottom:10px; }
     .panel small{ opacity:0.92; display:block; margin-top:10px; }
+
+    .row{
+      display:flex; gap:10px; justify-content:center; align-items:center; flex-wrap:wrap;
+      margin-top:10px;
+    }
+    input{
+      background: rgba(255,255,255,0.10);
+      border: 1px solid rgba(255,255,255,0.14);
+      color:#fff;
+      border-radius: 12px;
+      padding:10px 12px;
+      font-weight: 900;
+      outline:none;
+      width:min(220px, 70vw);
+      text-align:center;
+    }
+
+    .board{
+      margin-top: 10px;
+      text-align:left;
+      background: rgba(255,255,255,0.08);
+      border:1px solid rgba(255,255,255,0.10);
+      border-radius: 14px;
+      padding:10px 12px;
+      max-height: 240px;
+      overflow:auto;
+    }
+    .board .h{
+      display:flex; justify-content:space-between; font-weight:900; opacity:0.95;
+      margin-bottom:6px;
+    }
+    .board .item{
+      display:flex; justify-content:space-between; padding:6px 0;
+      border-top:1px solid rgba(255,255,255,0.08);
+      font-weight:800;
+    }
+    .muted{ opacity:0.85; font-weight:800; }
 
     .toast{
       position:absolute; left:50%; bottom:18px;
@@ -68,7 +105,6 @@
   <div class="hud">
     <span id="stage">스테이지: 1/20</span>
     <span id="score">점수: 0</span>
-    <span id="best">최고: 0</span>
     <span id="life">목숨: 10</span>
     <span id="pow">파워업: W0 R0 L0</span>
     <span id="sub">서브웨폰: OFF</span>
@@ -82,12 +118,20 @@
 
   <div id="panel" class="panel">
     <b>민우 1945 스테이지 슈팅 ✈️</b>
-    <div>화면을 <b>터치해서 드래그</b>하면 비행기가 움직여요.</div>
-    <div>🔫 자동발사 / 🎁 파워업 3종 / 👑 20스테이지 보스</div>
-    <div style="margin-top:10px; font-weight:900;">파워업 3종</div>
-    <div>🟦 WIDE(와이드) / 🟩 RAPID(연사) / 🟪 LASER(레이저)</div>
-    <div style="margin-top:6px;">✅ 파워업 총합이 <b>10</b> 이상이면 <b>서브웨폰</b>이 켜져요!</div>
-    <small>(아무 곳이나 터치하면 시작)</small>
+    <div class="muted">드래그 이동 / 자동발사 / 20스테이지 / 보스 피격 이펙트</div>
+
+    <div class="row">
+      <div style="font-weight:900;">이름(랭킹 저장):</div>
+      <input id="nameInput" maxlength="10" placeholder="민우" />
+      <button id="saveNameBtn">이름 저장</button>
+    </div>
+
+    <div class="board" id="board">
+      <div class="h"><span>랭킹 TOP 10</span><span>점수</span></div>
+      <div class="muted">아직 기록이 없어요. 😄</div>
+    </div>
+
+    <small>(화면 아무 곳이나 터치하면 시작)</small>
   </div>
 
   <div id="toast" class="toast">POWER UP!</div>
@@ -96,12 +140,21 @@
 <script>
 (() => {
   // ============================
-  // ✅ 기본 설정
+  // ✅ 튜닝 포인트
   // ============================
-  const KID_SPEED = 0.75;     // 아이용 속도 (0.70 더 느림 / 0.80 조금 빠름)
-  const STAGE_GROWTH = 1.07;  // 난이도 완만 증가
+  const KID_SPEED = 0.78;          // 아이용 기본 속도 (느리게 0.72 / 빠르게 0.82)
+  const STAGE_GROWTH = 1.075;      // 스테이지 기본 난이도 증가
   const MAX_STAGE = 20;
 
+  // "파워업 먹을수록 적도 강해지는" 자동밸런싱 강도
+  // (값을 올리면: 파워업 먹어도 너무 쉬워지지 않음)
+  const POWER_ENEMY_SCALE = 0.032; // 0.025~0.045 추천
+
+  // 랭킹 저장
+  const LS_NAME = 'minwoo_player_name_v1';
+  const LS_RANK = 'minwoo_leaderboard_v1';
+
+  // PWA
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
   }
@@ -125,7 +178,6 @@
 
   const elStage = document.getElementById('stage');
   const elScore = document.getElementById('score');
-  const elBest  = document.getElementById('best');
   const elLife  = document.getElementById('life');
   const elPow   = document.getElementById('pow');
   const elSub   = document.getElementById('sub');
@@ -136,6 +188,10 @@
   const soundBtn = document.getElementById('soundBtn');
   const pauseBtn = document.getElementById('pauseBtn');
   const restartBtn = document.getElementById('restartBtn');
+
+  const nameInput = document.getElementById('nameInput');
+  const saveNameBtn = document.getElementById('saveNameBtn');
+  const boardEl = document.getElementById('board');
 
   let W=0, H=0, DPR=1;
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -152,6 +208,64 @@
   }
   window.addEventListener('resize', resize);
   resize();
+
+  // ---------- 랭킹 ----------
+  function getPlayerName(){
+    const saved = (localStorage.getItem(LS_NAME) || '').trim();
+    return saved || '민우';
+  }
+  function setPlayerName(n){
+    const name = (n || '').trim().slice(0,10) || '민우';
+    localStorage.setItem(LS_NAME, name);
+    nameInput.value = name;
+  }
+  function readBoard(){
+    try{
+      const raw = localStorage.getItem(LS_RANK);
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    }catch(e){ return []; }
+  }
+  function writeBoard(arr){
+    localStorage.setItem(LS_RANK, JSON.stringify(arr));
+  }
+  function renderBoard(){
+    const arr = readBoard();
+    if(arr.length === 0){
+      boardEl.innerHTML = `
+        <div class="h"><span>랭킹 TOP 10</span><span>점수</span></div>
+        <div class="muted">아직 기록이 없어요. 😄</div>
+      `;
+      return;
+    }
+    const rows = arr.slice(0,10).map((r,idx)=>{
+      const stage = r.stage ? ` (S${r.stage})` : '';
+      const dt = r.date ? ` · ${r.date}` : '';
+      return `<div class="item"><span>${idx+1}. ${escapeHtml(r.name || '민우')}${stage}<span class="muted">${dt}</span></span><span>${Math.floor(r.score||0)}</span></div>`;
+    }).join('');
+    boardEl.innerHTML = `<div class="h"><span>랭킹 TOP 10</span><span>점수</span></div>${rows}`;
+  }
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  }
+  function saveScoreToBoard(score, stage){
+    const name = getPlayerName();
+    const now = new Date();
+    const date = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+    const arr = readBoard();
+    arr.push({name, score: Math.floor(score), stage, date});
+    arr.sort((a,b)=> (b.score||0) - (a.score||0));
+    writeBoard(arr.slice(0,10));
+    renderBoard();
+  }
+
+  setPlayerName(getPlayerName());
+  renderBoard();
+
+  saveNameBtn.addEventListener('click', ()=>{
+    setPlayerName(nameInput.value);
+    showToast(`이름 저장: ${getPlayerName()}`);
+  });
 
   // ---------- Sound ----------
   let audioEnabled = true;
@@ -206,16 +320,11 @@
 
     stage:1,
     score:0,
-    best:Number(localStorage.getItem('minwoo_stage_best_v5') || 0),
 
     lives:10,
     invuln:0,
 
-    // powerups (무한성장 유지)
-    wideLv:0,
-    rapidLv:0,
-    laserLv:0,
-
+    wideLv:0, rapidLv:0, laserLv:0,
     subWeapon:false,
 
     bgScroll:0,
@@ -224,7 +333,9 @@
     killsToBoss: 28,
     bossActive:false,
 
-    diffMul: 1.0,
+    // difficulty dynamic
+    stageMul:1.0,   // stage baseline
+    powerMul:1.0,   // based on powerSum
 
     enemySpawnTimer:0,
     enemySpawnEvery:0.72,
@@ -236,14 +347,35 @@
     _subTimer:0,
   };
 
-  function powerSum(){
-    return state.wideLv + state.rapidLv + state.laserLv;
+  function powerSum(){ return state.wideLv + state.rapidLv + state.laserLv; }
+
+  function recomputeDifficulty(){
+    // 스테이지가 오를수록 기본 증가
+    state.stageMul = Math.pow(STAGE_GROWTH, state.stage - 1);
+
+    // 파워업이 오를수록 적도 같이 증가(가만히 있어도 끝나는 현상 방지)
+    const p = powerSum();
+    state.powerMul = 1.0 + p * POWER_ENEMY_SCALE;   // p=20이면 약 +64%
+
+    // 합쳐진 난이도
+    const d = state.stageMul * state.powerMul;
+
+    // 스폰/발사/속도: 너무 과해지지 않게 clamp
+    state.enemySpeed = 185 * d;
+
+    // 스폰 간격(작을수록 많이 나옴)
+    state.enemySpawnEvery = clamp(0.78 / d, 0.28, 0.92);
+
+    // 적 발사 간격(작을수록 자주 쏨)
+    state.enemyFireEvery  = clamp(1.35 / d, 0.45, 1.55);
+
+    // 보스 등장까지 처치수(너무 빨리 보스 가는 걸 방지)
+    state.killsToBoss = Math.floor(24 + state.stage * 4 + Math.min(16, p*0.8));
   }
 
   function updateHud(){
     elStage.textContent = `스테이지: ${state.stage}/${MAX_STAGE}`;
     elScore.textContent = `점수: ${Math.floor(state.score)}`;
-    elBest.textContent  = `최고: ${state.best}`;
     elLife.textContent  = `목숨: ${state.lives}`;
     elPow.textContent   = `파워업: W${state.wideLv} R${state.rapidLv} L${state.laserLv}`;
     elSub.textContent   = `서브웨폰: ${state.subWeapon ? 'ON' : 'OFF'}`;
@@ -252,12 +384,12 @@
 
   // ---------- Objects ----------
   const player = { x: W*0.5, y: H*0.82, r:18, targetX:null, targetY:null };
-  const enemies = [];        // {x,y,w,h,vy,hp,shootCd,kind,wiggle,t0,carrier,sparkT}
-  const pBullets = [];       // {x,y,vx,vy,r,damage,type,pierce,curve,from}
-  const eBullets = [];       // {x,y,vx,vy,r,damage,kind, spawnDelay, life}
-  const powerups = [];       // {x,y,vy,r,type}
-  const sparks = [];         // {x,y,vx,vy,life,col}
-  const rings  = [];         // {x,y,r,vr,life,col}
+  const enemies = [];  // {x,y,w,h,vy,hp,shootCd,kind,wiggle,t0,carrier,sparkT}
+  const pBullets = []; // {x,y,vx,vy,r,damage,type,pierce,curve,from}
+  const eBullets = []; // {x,y,vx,vy,r,damage,kind,spawnDelay,life}
+  const powerups = []; // {x,y,vy,r,type}
+  const sparks = [];   // fx
+  const rings  = [];
 
   // ---------- Controls ----------
   let isPointerDown=false;
@@ -309,7 +441,6 @@
     const rr=ar+br;
     return (dx*dx+dy*dy) <= rr*rr;
   }
-
   function boom(x,y,amount=18, col='#ffcc66'){
     for(let i=0;i<amount;i++){
       const a = rand(0, Math.PI*2);
@@ -320,15 +451,12 @@
     sfx.boom();
     if(navigator.vibrate) navigator.vibrate(10);
   }
-
   function bossHitFx(x,y){
-    // ✅ 보스 피격 이펙트: 번쩍 + 링 + 짧은 사운드
     rings.push({x,y, r: 10, vr: 520, life: 0.20, col: '#ffffff'});
     rings.push({x,y, r: 6, vr: 420, life: 0.18, col: '#7db6ff'});
     sfx.bossHit();
     if(state.boss) state.boss.hitFlash = 0.12;
   }
-
   function onPlayerHit(dmg=1){
     if(state.invuln>0) return;
     state.lives -= dmg;
@@ -344,6 +472,15 @@
     }
   }
 
+  function dropPowerup(x,y){
+    const r = Math.random();
+    let type = 'WIDE';
+    if(r < 0.34) type = 'WIDE';
+    else if(r < 0.68) type = 'RAPID';
+    else type = 'LASER';
+    powerups.push({x,y, vy: 115 * state.stageMul, r: 12, type});
+  }
+
   function applyPowerup(type){
     if(type==='WIDE')  state.wideLv += 1;
     if(type==='RAPID') state.rapidLv += 1;
@@ -352,42 +489,21 @@
     sfx.power();
     showToast(`POWER UP! (합:${powerSum()})`);
 
-    // ✅ 파워업 합 10 이상이면 서브웨폰 ON
-    const was = state.subWeapon;
     state.subWeapon = (powerSum() >= 10);
-    if(!was && state.subWeapon){
-      showToast('서브웨폰 ON!');
-      if(navigator.vibrate) navigator.vibrate([30,30,30]);
-    }
+    recomputeDifficulty(); // ✅ 파워업 먹으면 적도 같이 강해짐
     updateHud();
   }
 
-  function dropPowerup(x,y){
-    const r = Math.random();
-    let type = 'WIDE';
-    if(r < 0.34) type = 'WIDE';
-    else if(r < 0.68) type = 'RAPID';
-    else type = 'LASER';
-    powerups.push({x,y, vy: 115 * state.diffMul, r: 12, type});
-  }
-
-  // ---------- Stage / Difficulty ----------
+  // ---------- Stage / Flow ----------
   function setStage(n){
     state.stage = n;
     state.kills = 0;
     state.bossActive = false;
     state.boss = null;
 
-    state.diffMul = Math.pow(STAGE_GROWTH, state.stage - 1);
-
-    state.enemySpeed = 185 * state.diffMul;
-    state.enemySpawnEvery = clamp((0.74 / state.diffMul), 0.34, 0.95);
-    state.enemyFireEvery  = clamp((1.30 / state.diffMul), 0.60, 1.55);
-
-    state.killsToBoss = Math.floor(24 + state.stage * 4);
+    recomputeDifficulty();
 
     enemies.length=0; eBullets.length=0; powerups.length=0; sparks.length=0; rings.length=0;
-
     updateHud();
   }
 
@@ -413,13 +529,7 @@
     setStage(1);
 
     panel.style.display='block';
-    panel.innerHTML = `
-      <b>민우 1945 스테이지 슈팅 ✈️</b>
-      <div>드래그 이동 / 자동발사 / 20스테이지</div>
-      <div style="margin-top:8px; font-weight:900;">✨ 반짝이는 적 = 아이템 확률 ↑</div>
-      <div>파워업 합 10 이상이면 <b>서브웨폰 ON</b></div>
-      <small>(터치하면 시작)</small>
-    `;
+    renderBoard();
     pauseBtn.textContent='일시정지';
     updateHud();
   }
@@ -429,17 +539,18 @@
     state.running=false;
     state.paused=false;
 
-    state.best = Math.max(state.best, Math.floor(state.score));
-    localStorage.setItem('minwoo_stage_best_v5', String(state.best));
-    updateHud();
+    // ✅ 랭킹 저장
+    saveScoreToBoard(state.score, state.stage);
 
     panel.style.display='block';
-    panel.innerHTML = `
-      <b>게임 오버 😵</b>
-      <div>점수: <b>${Math.floor(state.score)}</b></div>
-      <div>최고: <b>${state.best}</b></div>
-      <div style="margin-top:10px; font-weight:900;">터치하면 다시 시작</div>
-    `;
+    renderBoard();
+    panel.querySelector('b').textContent = '게임 오버 😵';
+    // 보드 위에 안내 추가
+    const info = document.createElement('div');
+    info.style.marginTop = '8px';
+    info.style.fontWeight = '900';
+    info.innerHTML = `점수: <b>${Math.floor(state.score)}</b> · 스테이지: <b>${state.stage}</b><div style="margin-top:8px;">터치하면 다시 시작</div>`;
+    panel.insertBefore(info, boardEl);
   }
 
   function stageClear(){
@@ -448,45 +559,61 @@
 
     if(state.stage >= MAX_STAGE){
       state.cleared=true;
-      state.best = Math.max(state.best, Math.floor(state.score));
-      localStorage.setItem('minwoo_stage_best_v5', String(state.best));
-      updateHud();
+      // ✅ 랭킹 저장
+      saveScoreToBoard(state.score, state.stage);
+
       sfx.clear();
       panel.style.display='block';
-      panel.innerHTML = `
-        <b>전체 클리어! 🎉</b>
-        <div>20 스테이지 완주 성공!</div>
-        <div>점수: <b>${Math.floor(state.score)}</b> / 최고: <b>${state.best}</b></div>
-        <div style="margin-top:10px; font-weight:900;">터치하면 다시(1스테이지)</div>
-      `;
+      renderBoard();
+      panel.querySelector('b').textContent = '전체 클리어! 🎉';
+      const info = document.createElement('div');
+      info.style.marginTop = '8px';
+      info.style.fontWeight = '900';
+      info.innerHTML = `20 스테이지 완주! 점수: <b>${Math.floor(state.score)}</b><div style="margin-top:8px;">터치하면 다시(1스테이지)</div>`;
+      panel.insertBefore(info, boardEl);
       return;
     }
 
     const next = state.stage + 1;
     sfx.clear();
     panel.style.display='block';
-    panel.innerHTML = `
-      <b>스테이지 ${state.stage} 클리어! ✅</b>
-      <div>다음 스테이지: <b>${next}</b></div>
-      <div style="margin-top:10px; font-weight:900;">터치하면 시작</div>
-    `;
-    setStage(next);
+    renderBoard();
+    panel.querySelector('b').textContent = `스테이지 ${state.stage} 클리어! ✅`;
 
+    const info = document.createElement('div');
+    info.style.marginTop = '8px';
+    info.style.fontWeight = '900';
+    info.innerHTML = `다음 스테이지: <b>${next}</b><div class="muted" style="margin-top:6px;">스테이지가 오를수록 적/보스가 더 강해집니다.</div><div style="margin-top:8px;">터치하면 시작</div>`;
+    panel.insertBefore(info, boardEl);
+
+    setStage(next);
     enemies.length=0; pBullets.length=0; eBullets.length=0; powerups.length=0; sparks.length=0; rings.length=0;
   }
 
   // ---------- Spawning ----------
   function spawnEnemy(){
+    const d = state.stageMul * state.powerMul;
+
     const size = rand(0,1);
     const w = size < 0.6 ? rand(28, 42) : rand(44, 58);
     const h = size < 0.6 ? rand(24, 34) : rand(34, 44);
     const x = rand(w/2 + 12, W - w/2 - 12);
     const y = -h - 10;
-    const vy = (185 * state.diffMul) * rand(0.85, 1.12);
-    const hp = (w > 46) ? 5 : (Math.random() < 0.16 ? 3 : 2);
-    const kind = (hp >= 5) ? 'elite' : (hp >= 3 ? 'heavy' : 'normal');
 
-    const carrierChance = 0.22;
+    const vy = (185 * d) * rand(0.80, 1.08);
+
+    // ✅ 스테이지+파워에 따라 HP 증가
+    // 파워가 높아도 "가만히 있으면 끝" 방지: HP가 같이 올라감
+    const baseHp =
+      (w > 46) ? 5 :
+      (Math.random() < 0.18 ? 3 : 2);
+
+    const hpBoost = Math.floor((state.stage-1)/2) + Math.floor(powerSum()/6); // 스테이지/파워 구간별 증가
+    const hp = baseHp + hpBoost;
+
+    const kind = (hp >= 8) ? 'elite' : (hp >= 5 ? 'heavy' : 'normal');
+
+    const carrierChance = clamp(0.22 - powerSum()*0.002, 0.12, 0.22);
     const carrier = Math.random() < carrierChance;
 
     enemies.push({
@@ -501,26 +628,30 @@
   }
 
   function spawnBoss(){
-    const w = Math.min(280, W * 0.70);
-    const h = 120;
+    const d = state.stageMul * state.powerMul;
+
+    const w = Math.min(290, W * 0.72);
+    const h = 128;
     const x = W * 0.5;
     const y = -h - 40;
 
-    // 스테이지 20 기준으로 점점 강해짐
-    const hpMax = Math.floor((320 + state.stage*60) * state.diffMul * 1.25);
+    // ✅ 스테이지+파워에 따라 보스 HP 증가(확실히 체감)
+    const hpMax = Math.floor((420 + state.stage*85) * d * 1.18);
 
     state.boss = {
       x,y,w,h,
       yStop: 118,
-      vy: 120,
+      vy: 120 * d,
       dir: 1,
-      speedX: 85 + 10*state.stage,
+      speedX: (90 + 12*state.stage) * (0.92 + Math.min(0.18, powerSum()*0.01)),
       hp: hpMax,
       hpMax,
       shootTimer: 0,
-      shootEvery: clamp(0.85 / state.diffMul, 0.28, 0.85),
+      // ✅ 스테이지가 오를수록 더 자주 쏨
+      shootEvery: clamp(0.95 / d, 0.22, 0.95),
       patT: 0,
-      hitFlash: 0, // ✅ 피격 번쩍
+      hitFlash: 0,
+      tier: (state.stage > 10 ? 1.15 : 1.00)
     };
     state.bossActive = true;
     sfx.boss();
@@ -530,6 +661,7 @@
 
   // ---------- Shooting ----------
   function getFireEvery(){
+    // 플레이어 연사: 너무 빨라지는 건 제한
     return clamp(0.18 - state.rapidLv*0.010, 0.08, 0.18);
   }
 
@@ -538,11 +670,10 @@
     const count = 1 + Math.min(10, state.wideLv);
     const spreadBase = 70 + Math.min(12, state.wideLv) * 24;
 
-    const pSum = powerSum();
-    const curvePow = Math.max(0, pSum - 8);
-    const curveBase = Math.min(2.4, curvePow * 0.10);
+    const p = powerSum();
+    const curvePow = Math.max(0, p - 8);
+    const curveBase = Math.min(2.2, curvePow * 0.10);
 
-    // 메인탄
     if(count === 1){
       pBullets.push({x: player.x, y: player.y - player.r - 8, vx: 0, vy: -baseVy, r: 3.1, damage: 1, type:'N', pierce:0, curve: (Math.random()<0.5?-1:1)*curveBase, from:'main'});
     } else {
@@ -561,10 +692,9 @@
       }
     }
 
-    // 레이저
     if(state.laserLv > 0){
-      const pierce = Math.min(20, state.laserLv);
-      const dmg = 2 + Math.floor(state.laserLv/2) + Math.min(10, state.laserLv);
+      const pierce = Math.min(22, state.laserLv);
+      const dmg = 2 + Math.floor(state.laserLv/2) + Math.min(12, state.laserLv);
       pBullets.push({x: player.x, y: player.y - player.r - 10, vx: 0, vy: -1200, r: 2.6, damage: dmg, type:'L', pierce, curve: 0, from:'main'});
       sfx.laser();
     } else {
@@ -572,39 +702,36 @@
     }
   }
 
-  // ✅ 서브웨폰(파워합 10 이상)
   function subWeaponFire(){
     const y = player.y - player.r - 6;
     const leftX  = player.x - 34;
     const rightX = player.x + 34;
 
-    // 서브웨폰 레벨(파워가 더 올라가면 약간 강화)
-    const lvl = Math.floor((powerSum() - 10) / 5); // 10~14:0, 15~19:1 ...
-    const dmg = 1 + Math.min(3, lvl);
+    const lvl = Math.floor((powerSum() - 10) / 5);
+    const dmg = 1 + Math.min(4, lvl);
     const spd = -980;
 
-    // 살짝 모이는 각도(임팩트)
     pBullets.push({x:leftX,  y, vx: -40, vy: spd, r: 2.7, damage: dmg, type:'S', pierce:0, curve: 0, from:'sub'});
     pBullets.push({x:rightX, y, vx:  40, vy: spd, r: 2.7, damage: dmg, type:'S', pierce:0, curve: 0, from:'sub'});
     sfx.sub();
   }
 
-  // ✅ 적 탄: 유도 없음. "플레이어를 향해 한 번 조준" 후 직선 진행
+  // 적 탄: 한번 조준 후 직선 (3발 간격)
   function enemyFireFrom(e){
-    const speed = 280 * state.diffMul;
-    const baseDelay = 0.14; // 3발 간격(천천히)
+    const d = state.stageMul * state.powerMul;
+
+    const speed = 290 * d;
+    const baseDelay = 0.16; // 약간 더 천천히
     const shots = 3;
 
-    // 조준 각도(한 번만 계산)
     const dx = player.x - e.x;
     const dy = player.y - e.y;
     const len = Math.max(1, Math.hypot(dx,dy));
     const ax = (dx/len) * speed;
     const ay = (dy/len) * speed;
 
-    // 너무 옆으로 튀면 게임이 어려워지니 X속도 제한
-    const vx0 = clamp(ax, -220*state.diffMul, 220*state.diffMul);
-    const vy0 = Math.max(180*state.diffMul, ay);
+    const vx0 = clamp(ax, -240*d, 240*d);
+    const vy0 = Math.max(200*d, ay);
 
     for(let i=0;i<shots;i++){
       eBullets.push({
@@ -619,22 +746,25 @@
     sfx.enemyShoot();
   }
 
-  // 보스 패턴: 10개 패턴을 20스테이지에서 2바퀴(11~20은 강화)
+  // 보스 패턴: 스테이지 올라갈수록 강도 상승
   function bossFirePattern(){
     const b = state.boss;
     if(!b) return;
 
-    const dm = state.diffMul;
-    const cycle = ((state.stage - 1) % 10) + 1;     // 1~10
-    const tier = (state.stage > 10) ? 1.15 : 1.00;  // 11~20 강화
+    const d = state.stageMul * state.powerMul;
+    const cycle = ((state.stage - 1) % 10) + 1;
+    const tier = (state.stage > 10) ? 1.18 : 1.00;
 
-    const baseVy = 320 * dm * tier;
-    const sx = 240 * tier;
+    // 스테이지가 오를수록 탄막이 조금씩 두꺼워짐
+    const dense = 1 + Math.floor((state.stage-1)/4); // 1~5
+
+    const baseVy = 330 * d * tier;
+    const sx = 250 * tier;
 
     const addBullet = (x,y,vx,vy,r=4.0, kind='orb') =>
       eBullets.push({x,y,vx,vy,r,damage:1,kind, spawnDelay:0, life:8.0});
 
-    const aimAtPlayer = (speed=460*dm*tier) => {
+    const aimAtPlayer = (speed=500*d*tier) => {
       const dx = player.x - b.x;
       const dy = (player.y - b.y);
       const len = Math.max(1, Math.hypot(dx,dy));
@@ -644,115 +774,115 @@
     b.patT += b.shootEvery;
 
     switch(cycle){
-      case 1: { // fan
-        const n = 8;
+      case 1: {
+        const n = 8 + dense;
         for(let i=0;i<n;i++){
           const t = (i/(n-1)-0.5);
-          addBullet(b.x + t*36, b.y + b.h*0.60, t*sx, baseVy, 4.0, 'orb');
+          addBullet(b.x + t*36, b.y + b.h*0.60, t*sx*d*0.9, baseVy, 4.0, 'orb');
         }
         break;
       }
-      case 2: { // aimed burst
-        const kmax = (tier>1 ? 5 : 4);
+      case 2: {
+        const kmax = 4 + Math.min(3, dense);
         for(let k=0;k<kmax;k++){
-          const a = aimAtPlayer(480*dm*tier + k*18);
+          const a = aimAtPlayer((520 + k*22)*d*tier);
           addBullet(b.x, b.y + b.h*0.60, a.vx, a.vy, 4.2, 'orb');
         }
         break;
       }
-      case 3: { // spiral
-        const n = 10;
+      case 3: {
+        const n = 10 + dense;
         const ang0 = b.patT * 1.15;
         for(let i=0;i<n;i++){
           const ang = ang0 + i*(Math.PI*2/n);
-          addBullet(b.x, b.y + b.h*0.55, Math.cos(ang)*200*dm*tier, baseVy + Math.sin(ang)*130*dm*tier, 3.8, 'orb');
+          addBullet(b.x, b.y + b.h*0.55, Math.cos(ang)*210*d*tier, baseVy + Math.sin(ang)*140*d*tier, 3.8, 'orb');
         }
         break;
       }
-      case 4: { // wave
-        const n = 9;
-        const w = Math.sin(b.patT*1.0) * 1.0;
+      case 4: {
+        const n = 9 + dense;
+        const wv = Math.sin(b.patT*1.0) * 1.0;
         for(let i=0;i<n;i++){
           const t = (i/(n-1)-0.5);
-          addBullet(b.x + t*58, b.y + b.h*0.58, (t*240 + w*220)*dm*tier, baseVy, 4.0, 'orb');
+          addBullet(b.x + t*58, b.y + b.h*0.58, (t*250 + wv*230)*d*tier, baseVy, 4.0, 'orb');
         }
         break;
       }
-      case 5: { // rain
-        const n = tier>1 ? 12 : 10;
+      case 5: {
+        const n = 10 + dense*2;
         for(let i=0;i<n;i++){
-          addBullet(b.x + rand(-b.w*0.33, b.w*0.33), b.y + b.h*0.62, rand(-80,80)*dm*tier, baseVy + rand(0,140)*dm*tier, 3.7, 'orb');
+          addBullet(b.x + rand(-b.w*0.33, b.w*0.33), b.y + b.h*0.62, rand(-90,90)*d*tier, baseVy + rand(0,150)*d*tier, 3.7, 'orb');
         }
         break;
       }
-      case 6: { // cross + aimed
+      case 6: {
         for(let t of [-1, 1]){
-          addBullet(b.x + t*46, b.y + b.h*0.60, t*220*dm*tier, baseVy, 4.0, 'orb');
-          addBullet(b.x + t*12, b.y + b.h*0.60, t*140*dm*tier, baseVy+90*dm*tier, 4.0, 'orb');
+          addBullet(b.x + t*46, b.y + b.h*0.60, t*230*d*tier, baseVy, 4.0, 'orb');
+          addBullet(b.x + t*12, b.y + b.h*0.60, t*150*d*tier, baseVy+95*d*tier, 4.0, 'orb');
         }
-        const a = aimAtPlayer(520*dm*tier);
+        const a = aimAtPlayer(560*d*tier);
         addBullet(b.x, b.y + b.h*0.60, a.vx, a.vy, 4.4, 'orb');
         break;
       }
-      case 7: { // alternating fan
-        const n = 11;
+      case 7: {
+        const n = 11 + dense;
         const dir = (Math.floor(b.patT*1.2) % 2 === 0) ? 1 : -1;
         for(let i=0;i<n;i++){
           const t = (i/(n-1)-0.5);
-          addBullet(b.x, b.y + b.h*0.60, (t*sx*dir)*dm, baseVy, 3.9, 'orb');
+          addBullet(b.x, b.y + b.h*0.60, (t*sx*dir)*d, baseVy, 3.9, 'orb');
         }
         break;
       }
-      case 8: { // gap wall
-        const gapW = tier>1 ? 170 : 190;
+      case 8: {
+        const gapW = 180;
         const center = (Math.sin(b.patT*0.85)*0.5+0.5) * (W-gapW) + gapW/2;
-        const n = tier>1 ? 16 : 14;
+        const n = 14 + dense*2;
         for(let i=0;i<n;i++){
           const x = (i/(n-1))*W;
           if(Math.abs(x-center) < gapW/2) continue;
-          addBullet(x, b.y + b.h*0.62, 0, 360*dm*tier, 3.9, 'orb');
+          addBullet(x, b.y + b.h*0.62, 0, 380*d*tier, 3.9, 'orb');
         }
         break;
       }
-      case 9: { // dense + needle
-        const n = tier>1 ? 14 : 12;
+      case 9: {
+        const n = 12 + dense*2;
         for(let i=0;i<n;i++){
           const t = (i/(n-1)-0.5);
-          addBullet(b.x + t*86, b.y + b.h*0.60, t*190*dm*tier, baseVy+90*dm*tier, 3.7, 'orb');
+          addBullet(b.x + t*86, b.y + b.h*0.60, t*200*d*tier, baseVy+95*d*tier, 3.7, 'orb');
         }
-        const a = aimAtPlayer(600*dm*tier);
+        const a = aimAtPlayer(700*d*tier);
         addBullet(b.x, b.y + b.h*0.58, a.vx, a.vy, 3.2, 'needle');
         break;
       }
-      case 10: { // phase
+      case 10: {
         const hpRatio = b.hp / b.hpMax;
         if(hpRatio > 0.66){
-          const n = 10;
+          const n = 10 + dense;
           const ang0 = b.patT * 1.25;
           for(let i=0;i<n;i++){
             const ang = ang0 + i*(Math.PI*2/n);
-            addBullet(b.x, b.y + b.h*0.55, Math.cos(ang)*240*dm*tier, baseVy + Math.sin(ang)*160*dm*tier, 3.8, 'orb');
+            addBullet(b.x, b.y + b.h*0.55, Math.cos(ang)*250*d*tier, baseVy + Math.sin(ang)*170*d*tier, 3.8, 'orb');
           }
         } else if(hpRatio > 0.33){
           const gapW = 200;
           const center = (Math.sin(b.patT*1.0)*0.5+0.5) * (W-gapW) + gapW/2;
-          const n = 16;
+          const n = 16 + dense;
           for(let i=0;i<n;i++){
             const x = (i/(n-1))*W;
             if(Math.abs(x-center) < gapW/2) continue;
-            addBullet(x, b.y + b.h*0.62, 0, 380*dm*tier, 3.9, 'orb');
+            addBullet(x, b.y + b.h*0.62, 0, 410*d*tier, 3.9, 'orb');
           }
-          const a = aimAtPlayer(660*dm*tier);
+          const a = aimAtPlayer(760*d*tier);
           addBullet(b.x, b.y + b.h*0.58, a.vx, a.vy, 3.1, 'needle');
         } else {
-          const n = 12;
+          const n = 12 + dense*2;
           const dir = (Math.floor(b.patT*1.3) % 2 === 0) ? 1 : -1;
           for(let i=0;i<n;i++){
             const t = (i/(n-1)-0.5);
-            addBullet(b.x, b.y + b.h*0.60, (t*300*dir)*dm, 380*dm*tier, 3.8, 'orb');
+            addBullet(b.x, b.y + b.h*0.60, (t*320*dir)*d, 410*d*tier, 3.8, 'orb');
           }
-          for(let i=0;i<7;i++){
-            addBullet(b.x + rand(-b.w*0.33, b.w*0.33), b.y + b.h*0.60, rand(-120,120)*dm*tier, 380*dm*tier, 3.6, 'orb');
+          for(let i=0;i<8 + dense;i++){
+            addBullet(b.x + rand(-b.w*0.33, b.w*0.33), b.y + b.h*0.60, rand(-140,140)*d*tier, 410*d*tier, 3.6, 'orb');
           }
         }
         break;
@@ -782,7 +912,6 @@
     }
     ctx.globalAlpha = 1;
   }
-
   function drawGlowCircle(x,y,r,inner,outer,alpha=1){
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -836,7 +965,6 @@
       ctx.fill();
     }
 
-    // 서브웨폰 ON 표시(작은 위성포)
     if(state.subWeapon){
       drawGlowCircle(-34, 8, 16, 'rgba(109,255,178,0.28)', 'rgba(109,255,178,0)', 1);
       drawGlowCircle(34, 8, 16, 'rgba(109,255,178,0.28)', 'rgba(109,255,178,0)', 1);
@@ -874,9 +1002,7 @@
     if(e.carrier){
       const pulse = 0.5 + 0.5*Math.sin(e.sparkT*3.2);
       ctx.strokeStyle = `rgba(255,215,90,${0.25 + pulse*0.50})`;
-      ctx.lineWidth = 3;
-      ctx.stroke();
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 3; ctx.stroke(); ctx.lineWidth = 1;
     }
 
     ctx.fillStyle = '#ff5a6b';
@@ -899,9 +1025,8 @@
     ctx.save();
     ctx.translate(b.x, b.y);
 
-    // 피격 번쩍
     if(b.hitFlash > 0){
-      drawGlowCircle(0, 0, 76, 'rgba(255,255,255,0.35)', 'rgba(255,255,255,0)', 1);
+      drawGlowCircle(0, 0, 78, 'rgba(255,255,255,0.35)', 'rgba(255,255,255,0)', 1);
     }
 
     const hg = ctx.createLinearGradient(0, -b.h, 0, b.h);
@@ -917,7 +1042,6 @@
     ctx.closePath();
     ctx.fill();
 
-    // 보스에 하이라이트(강해보이게)
     ctx.globalAlpha = 0.18;
     ctx.fillStyle = '#ffffff';
     ctx.beginPath();
@@ -940,7 +1064,6 @@
 
     ctx.restore();
 
-    // HP bar
     const pad = 18;
     const barW = W - pad*2;
     const barH = 12;
@@ -1050,7 +1173,7 @@
 
     if(state.invuln>0) state.invuln = Math.max(0, state.invuln - dt);
 
-    // 서브웨폰 상태 갱신(혹시 수동 변경 대비)
+    // 서브웨폰
     state.subWeapon = (powerSum() >= 10);
 
     // player move
@@ -1062,7 +1185,7 @@
     player.x = clamp(player.x, player.r+10, W-player.r-10);
     player.y = clamp(player.y, player.r+10, H-player.r-10);
 
-    // auto fire (main)
+    // auto fire
     state._fireTimer += dt;
     const fireEvery = getFireEvery();
     while(state._fireTimer >= fireEvery){
@@ -1070,10 +1193,9 @@
       playerFire();
     }
 
-    // auto fire (sub weapon)
     if(state.subWeapon){
       state._subTimer += dt;
-      const subEvery = 0.22; // 서브웨폰 발사 간격
+      const subEvery = clamp(0.24 - Math.min(0.06, powerSum()*0.002), 0.16, 0.24);
       while(state._subTimer >= subEvery){
         state._subTimer -= subEvery;
         subWeaponFire();
@@ -1097,7 +1219,7 @@
       e.y += e.vy * dt;
 
       e.t0 += dt * e.wiggle;
-      e.x += Math.sin(e.t0) * 18 * dt * state.diffMul;
+      e.x += Math.sin(e.t0) * 18 * dt * state.stageMul;
       e.x = clamp(e.x, e.w/2+10, W-e.w/2-10);
 
       e.shootCd -= dt;
@@ -1118,7 +1240,6 @@
     // boss update
     if(state.bossActive){
       const b = state.boss;
-
       if(b.hitFlash > 0) b.hitFlash = Math.max(0, b.hitFlash - dt);
 
       if(b.y < b.yStop){
@@ -1157,15 +1278,13 @@
       if(m.y < -70 || m.x < -70 || m.x > W+70) pBullets.splice(i,1);
     }
 
-    // enemy bullets (no homing)
+    // enemy bullets
     for(let i=eBullets.length-1;i>=0;i--){
       const b = eBullets[i];
-
       if(b.spawnDelay && b.spawnDelay > 0){
         b.spawnDelay -= dt;
         continue;
       }
-
       b.x += b.vx * dt;
       b.y += b.vy * dt;
 
@@ -1174,7 +1293,6 @@
         eBullets.splice(i,1);
         continue;
       }
-
       if(circleHit(player.x, player.y, player.r*0.85, b.x, b.y, b.r)){
         eBullets.splice(i,1);
         onPlayerHit(1);
@@ -1199,7 +1317,9 @@
           boom(m.x, m.y, 4, m.type==='L' ? '#d993ff' : '#ffcc66');
 
           if(e.hp <= 0){
-            state.score += (e.kind==='elite' ? 120 : (e.kind==='heavy' ? 70 : 45)) * state.diffMul;
+            const kindScore = (e.kind==='elite' ? 140 : (e.kind==='heavy' ? 90 : 55));
+            state.score += kindScore * state.stageMul;
+
             state.kills += 1;
             boom(e.x, e.y, e.kind==='elite' ? 28 : 18, '#ffcc66');
 
@@ -1222,16 +1342,14 @@
         const m = pBullets[bi];
         if(circleHit(m.x, m.y, m.r+2, b.x, b.y, br)){
           b.hp -= m.damage;
-
-          // ✅ 보스 피격 이펙트
           bossHitFx(m.x, m.y);
 
           if(m.type==='L' && m.pierce>0) m.pierce -= 1;
           else pBullets.splice(bi,1);
 
           if(b.hp <= 0){
-            state.score += 1600 * state.diffMul;
-            boom(b.x, b.y, 80, '#ffcc66');
+            state.score += 1800 * state.stageMul;
+            boom(b.x, b.y, 90, '#ffcc66');
             state.bossActive = false;
             state.boss = null;
             enemies.length=0;
@@ -1282,7 +1400,8 @@
       spawnBoss();
     }
 
-    state.score += dt * (8 * state.diffMul);
+    // score tick (시간 점수는 완만)
+    state.score += dt * (6 * state.stageMul);
     updateHud();
   }
 
@@ -1292,7 +1411,7 @@
     const dt = Math.min(0.033, (ts - state.lastTs)/1000);
     state.lastTs = ts;
 
-    // ✅ 화면 깨짐 방지: 매 프레임 transform 초기화
+    // ✅ 화면 깨짐 방지
     ctx.setTransform(DPR,0,0,DPR,0,0);
 
     drawBackground(dt);
